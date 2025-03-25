@@ -1,0 +1,10 @@
+evaluate
+transformers 
+bitsandbytes
+peft
+accelerate 
+datasets 
+trl
+unsloth
+scikit-learn
+numpy

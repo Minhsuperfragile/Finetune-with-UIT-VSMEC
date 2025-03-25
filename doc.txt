@@ -1,0 +1,6 @@
+--task -> ftsim (finetuning similarity), evsim (evaluate similarity), ftstd (finetuning standard), evstd (evaluate standard)
+--model -> gte (Alibaba-NLP/gte-multilingual-mlm-base), qw7 (Qwen/Qwen2.5-7B), vbe (bkai-foundation-models/vietnamese-bi-encoder)
+--save-loss -> 0, 1, default 1
+--confusion-matrix -> 0, 1, default 1
+--config -> str, path to config file, default to None , will be decided by model and task
+--save-folder -> str, default {model-name}-{task}-{time}
