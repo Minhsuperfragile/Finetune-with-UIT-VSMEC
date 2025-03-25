@@ -8,3 +8,5 @@ trl
 unsloth
 scikit-learn
 numpy
+seaborn 
+matplotlib

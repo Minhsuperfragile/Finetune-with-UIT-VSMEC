@@ -9,15 +9,24 @@ from transformers import (
 )
 from datasets import load_dataset
 import numpy as np
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoTokenizer, AutoModel
+from torch.optim import AdamW
+from datasets import load_dataset
+from tqdm import tqdm
 
 parser = argparse.ArgumentParser()
 
 parser.add_argument("--model", type=str, default='vbe', help="One of 3 predefined model paths, or your local checkpoint paths of 1 of 3 models")
 parser.add_argument("--task", type=str, default='ftstd', help="One of 4 tasks, finetune or evaluate, similarity or standard")
 parser.add_argument("--config", type=str, default=None, help="Path to config file, if not provided, decide by model name")
-parser.add_argument("--save-loss", type=int, default=1, help="Save running loss to a json file or not, use with finetune mode only")
 parser.add_argument("--save-folder", type=str, default=None, help="Save finetuned model to a folder, if not provided, saved as model-name-task-time")
-parser.add_argument("--confusion-matrix", type=int, default=1, help="Save confusion matrix to an image file or not, use with evaluation mode only")
 
 args = parser.parse_args()
 
@@ -43,7 +52,9 @@ task_set = defaultdict(lambda: None,
                            "ftsim": 0,
                            "ftstd": 1,
                            "evsim": 2,
-                           "evstd": 3
+                           "evstd": 3,
+                           "ftllm": 4,
+                           "evllm": 5
                        })
 task = task_set[args.task]
 assert task is not None, "task must be 1 of 4 predefined tasks"
@@ -91,12 +102,12 @@ class StandardFinetuneEmbeddingModelRunner:
         self.preprocess_config = all_config['standard']['tokenizer'] 
         self.dataset = self.dataset.map(self.preprocess_function, batched=True)
         self.trainset = self.dataset["train"]
-        self.traning_args = TrainingArguments(output_dir = self.output_dir, **all_config['standard']['train'])
+        self.training_args = TrainingArguments(output_dir = self.output_dir, **all_config['standard']['train'])
         self.trainer = Trainer(
             model = self.model,
-            args = self.traning_args,
+            args = self.training_args,
             train_dataset = self.trainset,
-            tokenizer = self.tokenizer
+            processing_class = self.tokenizer
         )
 
     def encode_labels(self,example):
@@ -111,9 +122,187 @@ class StandardFinetuneEmbeddingModelRunner:
         self.trainer.save_model(self.output_dir)
         self.tokenizer.save_pretrained(self.output_dir)
 
-class StandardEvaluateEmbeddingModelRunner:
+class StandardEvaluateEmbeddingModelRunner(StandardFinetuneEmbeddingModelRunner):
     def __init__(self):
+        super().__init__()
+        self.testset = self.dataset['test']
+        self.training_args = TrainingArguments(output_dir=self.output_dir, **all_config['standard']['evaluate'])
+        self.trainer = Trainer(
+            model = self.model,
+            args = self.training_args,
+            eval_dataset=self.testset,
+            processing_class = self.tokenizer,
+            compute_metrics = self.compute_metric
+        )
         pass        
+
+    def compute_metric(self, eval_pred):
+        logits, labels = eval_pred
+        preds = np.argmax(logits, axis=-1)
+        acc = accuracy_score(labels, preds)
+    
+        # Compute precision, recall, f1-score
+        precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='weighted')
+
+        # Compute confusion matrix
+        conf_matrix = confusion_matrix(labels, preds)
+
+        plt.figure(figsize=(6, 5))
+        sns.heatmap(conf_matrix, annot=True, fmt="d", cmap="Blues", xticklabels=self.label_list, yticklabels=self.label_list)
+        plt.xlabel("Predicted Label")
+        plt.ylabel("True Label")
+        plt.title("Confusion Matrix")
+
+        # Save the image
+        image_path = f"{self.output_dir}/confusion_matrix.png"
+        plt.savefig(image_path)
+        plt.close()
+
+        return {
+            "accuracy": acc,
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+        }
+    
+    def evaluate(self):
+        result = self.trainer.evaluate()
+        print(result)
+
+class ContrastiveDataset(Dataset):
+    def __init__(self, data, tokenizer, label_list, max_length=258):
+        self.data = data
+        self.tokenizer = tokenizer
+        self.labels = label_list
+        self.max_length = max_length
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sentence = self.data[idx]["Sentence"]
+        emotion = self.data[idx]["Emotion"]
+
+        # Positive: (sentence, correct label)
+        input_enc = self.tokenizer(sentence, truncation=True, padding="max_length", max_length=self.max_length, return_tensors="pt")
+        label_enc = self.tokenizer(emotion, truncation=True, padding="max_length", max_length=self.max_length, return_tensors="pt")
+
+        return {
+            "input_ids": input_enc["input_ids"].squeeze(0),
+            "attention_mask": input_enc["attention_mask"].squeeze(0),
+            "label_ids": label_enc["input_ids"].squeeze(0),
+            "label_attention_mask": label_enc["attention_mask"].squeeze(0),
+            "emotion": emotion
+        }
+
+class ConstrastiveFinetuneEmbeddingModelRunner:
+    def __init__(self):
+        if args.save_folder is not None:
+            self.output_dir = args.save_folder
+        else: self.output_dir = format_save_folder_name(model_name)
+        self.config = all_config['similarity']['train']
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code = True)
+        self.model = AutoModel.from_pretrained(model_name, trust_remote_code = True)
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.dataset = load_dataset("tridm/UIT-VSMEC")
+        self.label_list = ['Tức giận', 'Kinh tởm', 'Thích thú', 'Sợ hãi', 'Khác', 'Buồn bã', 'Bất ngờ']
+        self.trainset = ContrastiveDataset(self.dataset['train'], self.tokenizer, self.label_list)
+        self.trainloader = DataLoader(self.trainset, batch_size=self.config['batch_size'], shuffle=self.config['shuffle'])
+        self.optimizer = AdamW(self.model.parameters(), lr = self.config['learning_rate'])
+        pass
+    
+    @staticmethod
+    def cosine_similarity(a,b):
+        a = F.normalize(a, dim=-1)
+        b = F.normalize(b, dim=-1)
+        return torch.matmul(a, b.T)
+    @staticmethod
+    def contrastive_loss(sent_embs, label_embs):
+        sim = ConstrastiveFinetuneEmbeddingModelRunner.cosine_similarity(sent_embs, label_embs)  # [B, B]
+        labels = torch.arange(sim.size(0)).to(sim.device)
+        return F.cross_entropy(sim, labels)
+    
+    def train(self):
+        self.model.to(self.device)
+        self.model.train()
+        for epoch in range(self.config['epochs']):
+            total_loss = 0.0
+            pbar = tqdm(self.trainloader, desc=f"Epoch {epoch+1}")
+
+            for batch in pbar:
+                input_ids = batch["input_ids"].to(self.device)
+                attention_mask = batch["attention_mask"].to(self.device)
+                label_ids = batch["label_ids"].to(self.device)
+                label_attention_mask = batch["label_attention_mask"].to(self.device)
+
+                # Get embeddings ([CLS] token)
+                sent_out = self.model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0]
+                label_out = self.model(input_ids=label_ids, attention_mask=label_attention_mask).last_hidden_state[:, 0]
+
+                loss = ConstrastiveFinetuneEmbeddingModelRunner.contrastive_loss(sent_out, label_out)
+
+                loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                total_loss += loss.item()
+                pbar.set_postfix(loss=loss.item())
+
+            print(f"Epoch {epoch+1} - Avg loss: {total_loss / len(self.trainset):.4f}")
+        self.model.save_pretrained(self.output_dir)
+        self.tokenizer.save_pretrained(self.output_dir)
+
+class ConstrastiveEvaluateEmbeddingModelRunner(ConstrastiveFinetuneEmbeddingModelRunner):
+    def __init__(self):
+        super().__init__()
+        self.config = all_config['similarity']['evaluate']
+        self.testset = ContrastiveDataset(self.dataset['test'], self.tokenizer, self.label_list)
+        self.testloader = DataLoader(self.testset, batch_size=self.config['batch_size'])
+
+    def evaluate(self):
+        self.model.eval()
+        correct = 0
+
+        preds = []
+        labels = []
+
+        with torch.no_grad():
+            label_embs = []
+            for label in self.label_list:
+                tokens = self.tokenizer(label, return_tensors="pt", truncation=True, padding=True).to(self.device)
+                label_emb = self.model(**tokens).last_hidden_state[:, 0]
+                label_embs.append(F.normalize(label_emb, dim=-1))
+            label_embs = torch.cat(label_embs, dim=0)  # [num_labels, hidden]
+
+        for batch in tqdm(self.testloader, desc="Evaluating"):
+            input_ids = batch["input_ids"].to(self.device)
+            attention_mask = batch["attention_mask"].to(self.device)
+            true_emotion = batch["emotion"]
+
+            with torch.no_grad():
+                sentence_emb = self.model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0]
+                sentence_emb = F.normalize(sentence_emb, dim=-1)
+                sims = ConstrastiveFinetuneEmbeddingModelRunner.cosine_similarity(sentence_emb, label_embs)  # [1, num_labels]
+                pred_idx = torch.argmax(sims, dim=1).item()
+                pred_label = self.label_list[pred_idx]
+
+            preds.append(pred_label)
+            labels.append(true_emotion[0])
+
+        accuracy = accuracy_score(labels, preds)
+        precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='weighted')
+        cm = confusion_matrix(labels, preds)
+        plt.figure(figsize=(6, 5))
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=self.label_list, yticklabels=self.label_list)
+        plt.xlabel("Predicted Label")
+        plt.ylabel("True Label")
+        plt.title("Confusion Matrix")
+
+        # Save the image
+        image_path = f"{self.output_dir}/confusion_matrix.png"
+        plt.savefig(image_path)
+        plt.close()
+        print(f"\nTop-1 Accuracy: {accuracy:.4f}, {precision:.4f}, {recall:.4f}, {f1:.4f}")
 
 class FinetuneLLM:
     def __init__(self):
@@ -124,6 +313,15 @@ class EvaluateLLM:
         pass
 
 if __name__ == "__main__":
-    if task == 1:
+    if task == 1: # finetune standard
         runner = StandardFinetuneEmbeddingModelRunner()
         runner.train()
+    elif task == 3: # evaluate standard
+        runner = StandardEvaluateEmbeddingModelRunner()
+        runner.evaluate()
+    elif task == 0: # finetune constrastive
+        runner = ConstrastiveFinetuneEmbeddingModelRunner()
+        runner.train()
+    elif task == 2: # evaluate constrastive
+        runner = ConstrastiveEvaluateEmbeddingModelRunner()
+        runner.evaluate()

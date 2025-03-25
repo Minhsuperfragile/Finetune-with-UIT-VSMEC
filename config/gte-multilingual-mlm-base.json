@@ -1,0 +1,40 @@
+{
+    "similarity": {
+        "evaluate": {
+            "batch_size": 1
+        },
+        "train": {
+            "batch_size": 16,
+            "shuffle": true,
+            "epochs": 1,
+            "learning_rate": 2e-5
+        },
+        "tokenizer": {
+            "max_length": 258
+        }
+    },
+    "standard": {
+        "evaluate": { 
+            "per_device_eval_batch_size": 1,
+            "do_train": false,
+            "do_eval": true,
+            "eval_strategy": "epoch"
+        },
+        "train": { 
+            "eval_strategy": "no",
+            "save_strategy": "epoch",
+            "learning_rate": 2e-5,
+            "per_device_train_batch_size": 8,
+            "num_train_epochs": 1,
+            "weight_decay": 0.01,
+            "logging_steps": 100,
+            "push_to_hub": false,
+            "report_to": "none"
+        },
+        "tokenizer": {
+            "truncation": true, 
+            "padding":"max_length", 
+            "max_length": 218
+        }
+    }
+}
