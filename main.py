@@ -42,20 +42,23 @@ assert task is not None, "task must be 1 of 4 predefined tasks"
 
 if task >= 4:
     import unsloth
+    from unsloth import FastLanguageModel, is_bfloat16_supported
+    import re
+    from trl import SFTTrainer
 
 from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
     Trainer,
-    TrainingArguments
+    TrainingArguments, 
+    TextStreamer
 )
-from datasets import load_dataset
+from datasets import load_dataset, concatenate_datasets
 import numpy as np
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoTokenizer, AutoModel
@@ -332,11 +335,125 @@ class ConstrastiveEvaluateEmbeddingModelRunner(ConstrastiveFinetuneEmbeddingMode
         
 class FinetuneLLM:
     def __init__(self):
-        pass
+        if args.save_folder is not None:
+            self.output_dir = args.save_folder
+        else: self.output_dir = format_save_folder_name(model_name)
+        self.max_seq_length = 2048
+        self.model_name = model_name
+        self.model , self.tokenizer  = FastLanguageModel.from_pretrained(
+        model_name = self.model_name,
+        max_seq_length = self.max_seq_length,
+        load_in_4_bit = False
+        )
+        # Wrap with peft model
+        self.peft_model_config = all_config["peft_model"]
+        self.model = FastLanguageModel.get_peft_model(
+            self.model, 
+            **self.peft_model_config
+        )
+        self.emotion_prompt = """Classify the emotion in the sentence below.
 
-class EvaluateLLM:
+### Sentence:
+{}
+
+### Emotion:
+{}"""
+        self.EOS_TOKEN = self.tokenizer.eos_token
+        self.trainer_args = all_config["train_args"]
+        self.dataset = concatenate_datasets([load_dataset("tridm/UIT-VSMEC", split = "train"), load_dataset("tridm/UIT-VSMEC", split = "validation")])
+        self.trainer = SFTTrainer(
+            model = self.model,
+            tokenizer = self.tokenizer,#
+            train_dataset = self.dataset,
+            dataset_text_field = "text",
+            max_seq_length = self.max_seq_length,
+            dataset_num_proc = 2,
+            packing = False,
+            args = TrainingArguments(
+                fp16 = not is_bfloat16_supported(),
+                bf16 = is_bfloat16_supported(),
+                output_dir = self.output_dir,
+                **self.trainer_args)
+        )
+    
+    def formatting_prompts_func(self,examples):
+        texts = examples["Sentence"]
+        emotions = examples["Emotion"]
+        formatted_texts = [(self.emotion_prompt.format(t, e) + self.EOS_TOKEN) for t, e in zip(texts, emotions)]
+        return {"text": formatted_texts}
+    
+    def train(self):
+        train_stat = self.trainer.train()
+        self.model.save_pretrained(self.output_dir)
+        self.tokenizer.save_pretrained(self.output_dir)
+        training_logs = self.trainer.state.log_history
+        loss_data = [{"step": log["step"], "loss": log["loss"]} for log in training_logs if "loss" in log]
+        loss_file = f"{self.output_dir}/training_loss.json"
+        with open(loss_file, "w") as f:
+            json.dump(loss_data, f, indent=4)
+
+        print(f"Training loss saved to {loss_file}")
+
+class EvaluateLLM(FinetuneLLM):
     def __init__(self):
-        pass
+        self.testset = load_dataset("tridm/UIT-VSMEC", split = "test")
+
+    def extract_sentence_emotion(self, text):
+        # Make <|endoftext|> optional
+        pattern = r"### Sentence:\s*(.*?)\s*\n\n### Emotion:\s*(.*?)(?:<\|endoftext\|>|$)"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            sentence = match.group(1).strip()
+            emotion = match.group(2).strip()
+            return sentence, emotion
+        print("Failed to parse:", text)  # Debug if it fails
+        return None, None
+    
+    def evaluate(self):
+        FastLanguageModel.for_inference(self.model)
+        true_labels = []
+        predicted_labels = []
+
+        for sentence, emotion in zip(self.testset["Sentence"], self.testset["Emotion"]):
+            inputs = self.tokenizer(
+                [
+                    self.emotion_prompt.format(
+                        f"{sentence}",
+                        "",
+                    )
+                ], return_tensors="pt"
+            ).to("cuda")
+
+            text_streamer = TextStreamer(self.tokenizer)
+            output = self.model.generate(**inputs, streamer=text_streamer, max_new_tokens=128)
+            decoded_output = self.tokenizer.decode(output[0], skip_special_tokens=True)
+            sentence_text, emotion_test = self.extract_sentence_emotion(decoded_output)
+
+            true_labels.append(emotion)
+            predicted_labels.append(emotion_test)
+
+        accuracy = accuracy_score(true_labels, predicted_labels)
+
+        precision, recall, f1, _ = precision_recall_fscore_support(true_labels, predicted_labels, average='weighted')
+
+        print(f"Accuracy: {accuracy:.4f}")
+        print(f"Precision: {precision:.4f}")
+        print(f"Recall: {recall:.4f}")
+        print(f"F1 score: {f1:.4f}")
+
+        cm = confusion_matrix(true_labels, predicted_labels)
+
+        plt.figure(figsize=(10, 7))
+        print("before sns")
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=self.label_list_en, yticklabels=self.label_list_en)
+        plt.xlabel("Predicted Label")
+        plt.ylabel("True Label")
+        plt.title("Confusion Matrix")
+
+        # Save the image
+        image_path = f"{self.output_dir}/confusion_matrix.png"
+        plt.savefig(image_path)
+        plt.close()
 
 if __name__ == "__main__":
     if task == 1: # finetune standard
@@ -350,4 +467,10 @@ if __name__ == "__main__":
         runner.train()
     elif task == 2: # evaluate constrastive
         runner = ConstrastiveEvaluateEmbeddingModelRunner()
+        runner.evaluate()
+    elif task == 4: # train qwen2.5 LLM model
+        runner = FinetuneLLM()
+        runner.train()
+    elif task == 5: # evaluate qwen2.5 LLM model
+        runner = EvaluateLLM()
         runner.evaluate()
