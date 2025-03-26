@@ -1,25 +1,6 @@
 from collections import defaultdict
 from datetime import datetime
-import json , unsloth , argparse, os
-from transformers import (
-    AutoTokenizer,
-    AutoModelForSequenceClassification,
-    Trainer,
-    TrainingArguments
-)
-from datasets import load_dataset
-import numpy as np
-from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
-import seaborn as sns
-import matplotlib.pyplot as plt
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
-from transformers import AutoTokenizer, AutoModel
-from torch.optim import AdamW
-from datasets import load_dataset
-from tqdm import tqdm
+import json , argparse, os
 
 parser = argparse.ArgumentParser()
 
@@ -59,6 +40,29 @@ task_set = defaultdict(lambda: None,
 task = task_set[args.task]
 assert task is not None, "task must be 1 of 4 predefined tasks"
 
+if task >= 4:
+    import unsloth
+
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    Trainer,
+    TrainingArguments
+)
+from datasets import load_dataset
+import numpy as np
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
+from transformers import AutoTokenizer, AutoModel
+from torch.optim import AdamW
+from datasets import load_dataset
+from tqdm import tqdm
+
 def format_save_folder_name(model_name):
     if "/" in model_name:
         name_ = model_name.split("/")[-1]
@@ -74,7 +78,7 @@ def format_save_folder_name(model_name):
     current_hour = now.hour
     current_minute = now.minute
 
-    return f'{name_}-{current_date}-{current_month}-{current_hour}-{current_minute}'
+    return f'{name_}-{args.task}-{current_date}{current_month}{current_hour}{current_minute}'
 
 class StandardFinetuneEmbeddingModelRunner:
     def __init__(self):
@@ -147,7 +151,7 @@ class StandardEvaluateEmbeddingModelRunner(StandardFinetuneEmbeddingModelRunner)
         # Compute confusion matrix
         conf_matrix = confusion_matrix(labels, preds)
 
-        plt.figure(figsize=(6, 5))
+        plt.figure(figsize=(10, 7))
         sns.heatmap(conf_matrix, annot=True, fmt="d", cmap="Blues", xticklabels=self.label_list, yticklabels=self.label_list)
         plt.xlabel("Predicted Label")
         plt.ylabel("True Label")
@@ -220,7 +224,7 @@ class ConstrastiveFinetuneEmbeddingModelRunner:
         }
 
         self.dataset = load_dataset("tridm/UIT-VSMEC")
-        self.trainset = ContrastiveDataset(self.dataset['train'].select(range(10)), self.tokenizer, self.label_list_vi)
+        self.trainset = ContrastiveDataset(self.dataset['train'], self.tokenizer, self.label_list_vi)
         self.trainloader = DataLoader(self.trainset, batch_size=self.config['batch_size'], shuffle=self.config['shuffle'])
         self.optimizer = AdamW(self.model.parameters(), lr = self.config['learning_rate'])
         pass
@@ -314,7 +318,7 @@ class ConstrastiveEvaluateEmbeddingModelRunner(ConstrastiveFinetuneEmbeddingMode
         # print("before plt")
         cm = confusion_matrix(labels, preds)
 
-        plt.figure(figsize=(6, 5))
+        plt.figure(figsize=(10, 7))
         print("before sns")
         sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=self.label_list_en, yticklabels=self.label_list_en)
         plt.xlabel("Predicted Label")
@@ -326,7 +330,6 @@ class ConstrastiveEvaluateEmbeddingModelRunner(ConstrastiveFinetuneEmbeddingMode
         plt.savefig(image_path)
         plt.close()
         
-
 class FinetuneLLM:
     def __init__(self):
         pass
