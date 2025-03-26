@@ -15,7 +15,7 @@ model_set = defaultdict(lambda: None,
                         {
                             'vbe' : "bkai-foundation-models/vietnamese-bi-encoder",
                             'gte' : "Alibaba-NLP/gte-multilingual-mlm-base",
-                            'qw7' : "unsloth/Qwen2.5-3B"
+                            'qw7' : "unsloth/Qwen2.5-7B"
                         })
 
 model_name = model_set[args.model]
@@ -343,8 +343,7 @@ class FinetuneLLM:
         print(self.model_name)
         self.model , self.tokenizer  = FastLanguageModel.from_pretrained(
             model_name = self.model_name,
-            max_seq_length = self.max_seq_length,
-            load_in_4_bit = False
+            max_seq_length = self.max_seq_length
         )
         # Wrap with peft model
         self.peft_model_config = all_config["peft_model"]
