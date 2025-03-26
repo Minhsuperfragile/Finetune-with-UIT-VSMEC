@@ -361,6 +361,7 @@ class FinetuneLLM:
         self.EOS_TOKEN = self.tokenizer.eos_token
         self.trainer_args = all_config["train_args"]
         self.dataset = concatenate_datasets([load_dataset("tridm/UIT-VSMEC", split = "train"), load_dataset("tridm/UIT-VSMEC", split = "validation")])
+        self.dataset = self.dataset.map(self.formatting_prompts_func, batched = True)
         self.trainer = SFTTrainer(
             model = self.model,
             tokenizer = self.tokenizer,#
