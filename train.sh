@@ -1,7 +1,7 @@
 # Select one command to run 
 
 # train mGTE model with constrastive task
-python main.py --model gte --task ftsim 
+python main.py --model gte --task ftsim --save-folder gteSimFT
 # train vietnamese-bi-encoder model with contrastive task
 python main.py --model vbe --task ftsim 
 
