@@ -10,5 +10,5 @@
 # # train vietnamese-bi-encoder model with standard classification task
 # python main.py --model vbe --task ftstd
 
-# train Qwen2.5 with standard 
+# train Qwen2.5  
 python main.py --model qw7 --task ftllm
