@@ -309,22 +309,23 @@ class ConstrastiveEvaluateEmbeddingModelRunner(ConstrastiveFinetuneEmbeddingMode
 
         accuracy = accuracy_score(labels, preds)
         precision, recall, f1, _ = precision_recall_fscore_support(labels, preds, average='weighted')
+        print(f"\nTop-1 Accuracy: {accuracy:.4f}, {precision:.4f}, {recall:.4f}, {f1:.4f}\n")
         # precision, recall, f1 = 0,0,0
         # print("before plt")
-        # cm = confusion_matrix(labels, preds, labels=[self.label2id[label] for label in self.label_list_en])
+        cm = confusion_matrix(labels, preds)
 
-        # plt.figure(figsize=(6, 5))
-        # print("before sns")
-        # sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=self.label_list, yticklabels=self.label_list)
-        # plt.xlabel("Predicted Label")
-        # plt.ylabel("True Label")
-        # plt.title("Confusion Matrix")
+        plt.figure(figsize=(6, 5))
+        print("before sns")
+        sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=self.label_list_en, yticklabels=self.label_list_en)
+        plt.xlabel("Predicted Label")
+        plt.ylabel("True Label")
+        plt.title("Confusion Matrix")
 
-        # # Save the image
-        # image_path = f"{self.output_dir}/confusion_matrix.png"
-        # plt.savefig(image_path)
-        # plt.close()
-        print(f"\nTop-1 Accuracy: {accuracy:.4f}, {precision:.4f}, {recall:.4f}, {f1:.4f}")
+        # Save the image
+        image_path = f"{self.output_dir}/confusion_matrix.png"
+        plt.savefig(image_path)
+        plt.close()
+        
 
 class FinetuneLLM:
     def __init__(self):
