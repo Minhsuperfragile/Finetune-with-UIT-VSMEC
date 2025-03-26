@@ -25,7 +25,7 @@ if model_name is None:
         all_config = json.load(f) 
     model_name = args.model 
 else:
-    with open(f"./config/{model_name.split("/")[-1]}.json", 'r') as f:
+    with open(f"./config/{model_name.split('/')[-1]}.json", 'r') as f:
         all_config = json.load(f) 
 
 task_set = defaultdict(lambda: None, 
