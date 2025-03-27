@@ -137,7 +137,7 @@ class StandardEvaluateEmbeddingModelRunner(StandardFinetuneEmbeddingModelRunner)
         self.trainer = Trainer(
             model = self.model,
             args = self.training_args,
-            eval_dataset=self.testset,
+            eval_dataset= self.testset,
             processing_class = self.tokenizer,
             compute_metrics = self.compute_metric
         )
@@ -145,6 +145,7 @@ class StandardEvaluateEmbeddingModelRunner(StandardFinetuneEmbeddingModelRunner)
 
     def compute_metric(self, eval_pred):
         logits, labels = eval_pred
+        # print(logits[0])
         preds = np.argmax(logits, axis=-1)
         acc = accuracy_score(labels, preds)
     
@@ -305,6 +306,7 @@ class ConstrastiveEvaluateEmbeddingModelRunner(ConstrastiveFinetuneEmbeddingMode
                 sentence_emb = self.model(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state[:, 0]
                 sentence_emb = F.normalize(sentence_emb, dim=-1)
                 sims = ConstrastiveFinetuneEmbeddingModelRunner.cosine_similarity(sentence_emb, label_embs)  # [1, num_labels]
+                # print(sims, input_ids)
                 pred_idx = torch.argmax(sims, dim=1).item()
                 pred_label = self.label_list_en[pred_idx]
 

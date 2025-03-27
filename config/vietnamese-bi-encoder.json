@@ -6,7 +6,7 @@
         "train": {
             "batch_size": 16,
             "shuffle": true,
-            "epochs": 5,
+            "epochs": 1,
             "learning_rate": 2e-5
         },
         "tokenizer": {
